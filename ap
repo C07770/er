@@ -1,0 +1,212 @@
+// Avoid `console` errors in browsers that lack a console
+if (!(window.console && console.log)) {
+    (function () {
+        var noop = function () {
+        };
+        var methods = ['assert', 'clear', 'count', 'debug', 'dir', 'dirxml', 'error', 'exception', 'group', 'groupCollapsed', 'groupEnd', 'info', 'log', 'markTimeline', 'profile', 'profileEnd', 'markTimeline', 'table', 'time', 'timeEnd', 'timeStamp', 'trace', 'warn'];
+        var length = methods.length;
+        var console = window.console = {};
+        while (length--) {
+            console[methods[length]] = noop;
+        }
+    }());
+}
+
+Ext.Loader.setConfig({
+    disableCaching: false,
+
+    enabled: true,
+    paths: {
+        Clear: 'clear',
+        eRecon_web: 'app'
+    }
+});
+
+Ext.syncRequire('eRecon_web.init.InitDirect');
+
+Ext.override(Ext.grid.View, { enableTextSelection: true });
+var globalAjaxTimeout=60000;
+
+
+eRecon_web.direct.action.LegalVehicleService.getAjaxTimeout( function(p,response){
+	globalAjaxTimeout=response.result;
+		});
+
+Ext.Ajax.on('beforerequest', function (conn, options) {
+	options.timeout=globalAjaxTimeout;
+   if (!(/^http:.*/.test(options.url) || /^https:.*/.test(options.url))) {
+     if (typeof(options.headers) == "undefined") {
+       options.headers = {'csrfPreventionToken': Ext.util.Cookies.get('csrfPreventionToken')};
+     } else {
+       options.headers.extend({'csrfPreventionToken': Ext.util.Cookies.get('csrfPreventionToken')});
+     }                        
+   }
+}, this);
+
+Ext.Ajax.on('requestcomplete', function (conn,response, options,eOpts) {
+   if (!(/^http:.*/.test(options.url) || /^https:.*/.test(options.url))) {
+	  try{
+		  if(response.getAllResponseHeaders().is_csrf_token_expired=="TRUE"){
+			  Ext.util.Cookies.set('csrfPreventionToken','');
+			  location.href = "logout.jsp";
+			  return;
+		  }
+	  Ext.util.Cookies.set('csrfPreventionToken',response.getAllResponseHeaders().csrfpreventiontoken);
+	  }catch(err){
+		  console.log("response doesn't contains headers");
+	  }
+   }
+}, this);
+
+Ext.application({
+    name: "eRecon_web",
+    appFolder: "app",
+    requires: [
+        "Clear.override.ExtJSOverrider"
+        , "eRecon_web.common.Constants"
+        , "eRecon_web.view.Viewport"
+    ],
+    controllers: ["MainController"],
+    enableQuickTips: true,
+
+    launch: function () {
+        eRecon_web.gbl = {
+            constants: new eRecon_web.common.Constants()
+        };
+        
+// For some reason, these constants are not initialized properly
+// TODO find the reason
+        Ext.window.MessageBox.INFO = 'x-message-box-info';
+    	Ext.window.MessageBox.WARNING = 'x-message-box-warning';
+    	Ext.window.MessageBox.QUESTION = 'x-message-box-question';
+    	Ext.window.MessageBox.ERROR = 'x-message-box-error';
+// =========================================================
+    	/**
+    	 * Check the user credentials
+    	 */
+    	
+    	this.createNavigationMenus();
+    	Ext.util.Cookies.clear('currentReconPeriod');
+    	 Ext.Ajax.request({
+             url: eRecon_web.gbl.constants.CHECK_USER_CRED_URL, 
+             	scope: this, 
+             	success: function (resp_) {
+             		var response = Ext.JSON.decode(resp_.responseText);
+             		if(response.status != "Failure") {
+             			console.log("User Logged in successfully");
+             			console.log("showAgree ++ " + response.showAgreeDisagreePage);
+             			Ext.util.Cookies.set('currentReconPeriod',response.currentReconPeriod);
+             			if(response.showAgreeDisagreePage) {
+             				var agreeWindow = Ext.create('Ext.Window', {
+                 		        title: 'Welcome',
+                 		        width: 900,
+                 		        height: 500,
+                 		        closable: false,
+                 		        layout: 'fit',
+                 		        autoScroll : true,
+                 		       dockedItems: [{
+                 		          xtype: 'toolbar',
+                 		          dock: 'bottom',
+                 		          items: [{
+                 		        	xtype : "button",
+                 					text : "Agree",
+                 					scope : this,
+                 					iconCls: 'iconAccept',
+                 					action : "Agree",
+                 					handler: function() {
+                 						Ext.Ajax.request({
+                 				             url: "welcome.up?buttonAction=AgreeAjax", 
+                 				             	scope: this, 
+                 				             	success: function (resp_) {
+                 				             		console.log("successfully user agreed.");
+                 				             		agreeWindow.close();
+                 				             		if(Ext.util.Cookies.get('isDashboardUserFlag')=="true"){var monthYearCombo=Ext.ComponentQuery.query("combo#lvreconperiodfld")[0];
+            			         					monthYearCombo.setValue(response.currentReconPeriod);
+            			         					//monthYearCombo.fireEvent("select");
+            			         					}
+                 				             	}
+                 						});
+                 						
+                 				       
+                 				    }
+                 		          },
+                 		         {
+                  		        	xtype : "button",
+                  					text : "Disagree",
+                  					scope : this,
+                  					iconCls: 'iconDiscard',
+                  					action : "disagree",
+                  					handler: function() {
+                  				      agreeWindow.close();
+                  				      location.href = "logout.jsp";
+                  				      Ext.util.Cookies.set('csrfPreventionToken','');
+                         		      Ext.util.Cookies.set("SMSESSION", '', new Date(), '/', '.ssmb.com', true);
+                  				    }
+                  		          }]
+                 		      }],
+                 		       html: response.welcomeText
+                 		    }).show();
+             			}
+             			
+             		} else {
+             			console.log("User Logged in Failure");
+             			Ext.create('Ext.Window', {
+             		        title: 'Error',
+             		        width: 900,
+             		        height: 500,
+             		        closable: true,
+             		        layout: 'fit',
+             		        autoScroll : true,
+             		       html: response.errorMessage.value
+             		    }).show();
+             		}
+                 	
+             	},
+             	failure: function(response, opts) {
+             		console.log("User Logged in failed.");
+             		alert("Error!");
+                }
+         });
+    }, 
+    
+    createNavigationMenus: function() {
+    	Ext.Ajax.request({
+            url: eRecon_web.gbl.constants.URL_ERECON_METADATA, 
+            	scope: this, 
+            	success: function (resp_) {
+                // Store metadata in ERecon global namespace for later reuse
+                	eRecon_web.gbl.metadata = Ext.JSON.decode(resp_.responseText);
+                	this.postLaunch();// Launch the view port after setting Sync icon and tooltip   
+            	},
+            	failure: function(response, opts) {
+            		this.removeInitialLoadingIndicator();
+                }
+        });
+//      Direct call to ent_refresh proc
+//      eRecon_web.direct.action.LegalVehicleService.doEntRefresh( function(p,response){
+//    	  var t=eRecon_web.gbl.metadata.navigation[16];
+//	      if(response.result!=null && response.result=="Succcess"){
+//	    	  t.iconCls='iconAccept';
+//	    	  t.tooltip="Entitlements in Sync";
+//	      }else{
+//	    	  t.iconCls='iconCancel';
+//	    	  t.tooltip="Error Syncing entitlements, kindly eRecon contact Operations Support";  
+//	      }
+//	      Ext.create("eRecon_web.view.Viewport");
+//	      Ext.get('initial-loading-div').remove();
+//			Ext.get('initial-header').remove();
+//	    	Ext.get('initial-loading-mask').remove();
+//		});
+    },
+    
+    postLaunch: function () {
+        Ext.create("eRecon_web.view.Viewport");
+    	this.removeInitialLoadingIndicator();
+    },
+    
+    removeInitialLoadingIndicator: function() {
+    	Ext.get('initial-loading-div').remove();
+		Ext.get('initial-header').remove();
+    	Ext.get('initial-loading-mask').remove();
+    }
+});
